@@ -121,12 +121,20 @@ void I2C_Init(i2cInitConfiguration_t *initConfiguration)
 
     // Malloc memory for the HIn PDS and register data buffers
     g_pdsDataLen = initConfiguration->HIn_pdsLength;
-    g_HInStreamBuffer[0] = (uint16_t*)malloc((g_pdsDataLen + 1) * 2);
-    g_HInStreamBuffer[1] = (uint16_t*)malloc((g_pdsDataLen + 1) * 2);
+    g_HInStreamBuffer[0] = (uint16_t*)calloc((g_pdsDataLen + 1) * 2, 1);
+    g_HInStreamBuffer[1] = (uint16_t*)calloc((g_pdsDataLen + 1) * 2, 1);
     g_HInPdsData[0] = g_HInStreamBuffer[0]+1;
     g_HInPdsData[1] = g_HInStreamBuffer[1]+1;
-    g_registerData[0] = (uint16_t*)malloc(initConfiguration->longestRegisterLength * 2);
-    g_registerData[1] = (uint16_t*)malloc(initConfiguration->longestRegisterLength * 2);
+    g_registerData[0] = (uint16_t*)calloc(initConfiguration->longestRegisterLength * 2, 1);
+    g_registerData[1] = (uint16_t*)calloc(initConfiguration->longestRegisterLength * 2, 1);
+
+    // Fill buffers with debug data, as they will be overwritten anyway.
+    for (uint32_t i = 0; i < g_pdsDataLen; i++)
+    {
+        g_HInPdsData[0][i] = i & 0xFF;
+        g_HInPdsData[1][i] = i & 0xFF;
+    }
+
 
     // init i2c dma
     // tx
@@ -170,11 +178,12 @@ void I2C_Init(i2cInitConfiguration_t *initConfiguration)
     // Only enable interrupts we want to use
     g_i2c->hw->intr_mask =
             I2C_IC_INTR_MASK_M_RX_FULL_BITS | I2C_IC_INTR_MASK_M_RD_REQ_BITS | I2C_IC_RAW_INTR_STAT_TX_ABRT_BITS |
-            I2C_IC_INTR_MASK_M_STOP_DET_BITS | I2C_IC_INTR_MASK_M_RX_DONE_BITS;
+            I2C_IC_INTR_MASK_M_STOP_DET_BITS | I2C_IC_INTR_MASK_M_RX_DONE_BITS | I2C_IC_INTR_MASK_M_GEN_CALL_BITS;
 
     // Enable interrupts
-    irq_set_exclusive_handler(I2C0_IRQ, i2c_slave_irq_handler);
-    irq_set_enabled(I2C0_IRQ, true);
+    uint32_t irq = g_i2c == &i2c0_inst ? I2C0_IRQ : I2C1_IRQ;
+    irq_set_exclusive_handler(irq, i2c_slave_irq_handler);
+    irq_set_enabled(irq, true);
 }
 
 /**
@@ -312,7 +321,25 @@ static void __isr __not_in_flash_func(i2c_slave_irq_handler)(void) {
     if (intr_stat == 0) {
         return;
     }
-    
+
+    // There was a general call.
+    if (intr_stat & I2C_IC_INTR_STAT_R_GEN_CALL_BITS) {
+        volatile uint32_t dummy = hw->clr_gen_call;
+        dummy = hw->clr_gen_call;
+        volatile uint32_t intr_stat_dbg = hw->intr_stat;
+        dummy = hw->clr_gen_call;
+        intr_stat_dbg = hw->intr_stat;
+        gpio_put(DEBUG_PIN1, 0);
+        gpio_put(DEBUG_PIN1, 1);
+
+        sync_callback();
+
+        // TODO: Check if this is the right place to send the status.
+        // Write status byte to the beginnign of the output buffer.
+        uint16_t status = 0;
+        H_In_GetStatusCallback((uint8_t*)&status);
+        g_HInStreamBuffer[g_activePdsRxChannel][0] = status & 0xFF;
+    }    
 
     // There was data left in the tx-fifo that is now cleared.
     if (intr_stat & I2C_IC_INTR_STAT_R_TX_ABRT_BITS) {
@@ -437,9 +464,10 @@ static void __isr __not_in_flash_func(i2c_slave_irq_handler)(void) {
     }
 
     // There shouldn't be any interrupts that were there at IRQ entry we didn't handle.
-    if ((hw->intr_stat & intr_stat) != 0) {
+    if ((hw->intr_stat & intr_stat ) & ~0x800) {
         volatile uint32_t intr_stat_dbg = hw->intr_stat;
         volatile uint32_t tx_abrt_source = hw->tx_abrt_source;
+        gpio_put(DEBUG_PIN1, 0);
         __breakpoint();
     }
 

@@ -22,9 +22,9 @@
 #define HOUT_BUFFER_ELEMENTS_MAX 1                                                                // max number of elements in the buffer for the H_OUT stream
 #define HOUT_BUFFER_SIZE (HOUT_BUFFER_ELEMENTS_MAX * HOUT_ELEMENT_SIZE * HOUT_NUMBER_OF_CHANNELS) // size of the buffer in bytes for the H_OUT stream
 
-#define HIN_NUMBER_OF_CHANNELS 2                                                              // number of channels for the H_IN stream
+#define HIN_NUMBER_OF_CHANNELS 6                                                              // number of channels for the H_IN stream
 #define HIN_ELEMENT_SIZE 4                                                                    // size in bytes of one element for the H_IN stream
-#define HIN_BUFFER_ELEMENTS_MAX 20                                                             // max number of elements in the buffer for the H_IN stream
+#define HIN_BUFFER_ELEMENTS_MAX 10                                                             // max number of elements in the buffer for the H_IN stream
 #define HIN_BUFFER_SIZE (HIN_BUFFER_ELEMENTS_MAX * HIN_ELEMENT_SIZE * HIN_NUMBER_OF_CHANNELS) // size of the buffer in bytes for the H_IN stream
 
 #define CMD_UPDATE_CONFIG 0x01 // command to update the configuration
@@ -121,6 +121,7 @@ bool ReadFromRegister(void *buffer, uint32_t *length, uint32_t registerName);
 bool __always_inline ReadStatus(uint8_t *status);
 void __isr multicoreFiFoIRQHandler(void);
 void comInterfaceHandleConfigUpdate();
+void comInterfaceHandleSync();
 
 // Public functions
 
@@ -140,7 +141,7 @@ int32_t comInterfaceInit(cominterfaceConfiguration *config)
 
     HOut_Callback = config->HOut_Callback;
     UpdateConfig_Callback = config->UpdateConfig_Callback;
-    Sync_Callback = config->sync_Callback;
+    Sync_Callback = config->sync_callback;
 
     // initialize the mutexes
     for (uint32_t i = 0; i < NUM_REGISTERS; i++)
@@ -168,14 +169,19 @@ int32_t comInterfaceInit(cominterfaceConfiguration *config)
 
 /**
  * @brief Adds a sample to the buffer and handles the buffer management
+ * 
+ * @note This function assumes that the samples are added in chronological order
+ *       (that means e.g. that all sammples of t0 are added before the first samples of t1).
+ *       The order of the channels does not matter.
  *
  * @param sample        pointer to the sample
- * @param sampleSize    size of the sample in bytes
+ * @param channel       channel number
  */
-void comInterfaceAddSample(void *sample, size_t sampleSize)
+void comInterfaceAddSample(void *sample, uint32_t channel)
 {
-    memcpy(&g_HIn_Buffer[g_HInBufferIndex][g_HInBufferOffset], sample, sampleSize);
-    g_HInBufferOffset += sampleSize;
+    uint32_t bufferIndex = (g_HInBufferOffset / (HIN_NUMBER_OF_CHANNELS * HIN_ELEMENT_SIZE)) * HIN_ELEMENT_SIZE + channel * (HIN_ELEMENT_SIZE * HIN_BUFFER_ELEMENTS_MAX);
+    memcpy(&g_HIn_Buffer[g_HInBufferIndex][bufferIndex], sample, HIN_ELEMENT_SIZE);
+    g_HInBufferOffset += HIN_ELEMENT_SIZE;
 
     if (g_HInBufferOffset >= HIN_BUFFER_SIZE)
     {
@@ -259,7 +265,6 @@ void __isr multicoreFiFoIRQHandler(void)
         uint32_t command = fifoData & 0x0000FFFF;
         uint32_t bufferIndex = (fifoData & 0xFFFF0000) >> 16;
 
-        assert(command == CMD_UPDATE_CONFIG || command == CMD_NEW_DATA);
         assert(bufferIndex < 2);
 
         switch (command)
@@ -280,6 +285,7 @@ void __isr multicoreFiFoIRQHandler(void)
             }
             break;
         default:
+            //__breakpoint();
             break;
         }
     }

@@ -39,14 +39,20 @@
 /************************************************************
  *  DEFINES
  ************************************************************/
+#define I2C_ADDR 0x28
+#define SDA_PIN 26
+#define SCL_PIN 27
+#define I2C_UNIT i2c1
+
+#define SAMPLES_PER_CHANNEL 10
+#define CHANNEL_NUMBER 6
+#define SAMPLE_SIZE 4
+#define READ_SIZE ( SAMPLES_PER_CHANNEL * CHANNEL_NUMBER * SAMPLE_SIZE)
 
 
 /************************************************************
  * Type definitions
  * **********************************************************/
-#define I2C_ADDR 0x28
-#define SDA_PIN 26
-#define SCL_PIN 27
 
 
 /************************************************************
@@ -79,6 +85,11 @@ static sd_card_t sd_card = {
     .sdio_if_p = &sdio_if
 };
 
+volatile bool g_sync = 0;
+volatile bool g_cardAvailable = 0;
+FIL g_file;
+uint32_t data[READ_SIZE / 4];
+
 /************************************************************
  * Function prototypes
  * **********************************************************/
@@ -88,6 +99,7 @@ void dataCallback(void* data, uint32_t length);
 void configCallback(DeviceSpecificConfiguration_t* config, DeviceSpecificConfiguration_t* oldConfig);
 size_t sd_get_num();
 sd_card_t *sd_get_by_num(size_t num);
+void sync_callback();
 
 /************************************************************
  * Functions
@@ -96,43 +108,21 @@ sd_card_t *sd_get_by_num(size_t num);
 int main()
 {
     setup();
-
     // See FatFs - Generic FAT Filesystem Module, "Application Interface",
     // http://elm-chan.org/fsw/ff/00index_e.html
     FATFS fs;
-    char* data = (char*)malloc(50000);
-    UINT bytesToRead = 500;
-    UINT bytes_read = 0;
-    uint32_t lastOffset = 0;
-    const char* const filename = "filename.txt";
-    for (int i = 0; i < 100000; i++)
+    const char* const filename = "binaryfile2.bin";
+
+    FRESULT fr = f_mount(&fs, "", 1);
+    if (FR_OK == fr)
     {
-
-        FRESULT fr = f_mount(&fs, "", 1);
-        if (FR_OK != fr) panic("f_mount error: %s (%d)\n", FRESULT_str(fr), fr);
-        FIL fil;
-        fr = f_open(&fil, filename, FA_READ);
+        fr = f_open(&g_file, filename, FA_READ);
         if (FR_OK != fr && FR_EXIST != fr)
-            panic("f_open(%s) error: %s (%d)\n", filename, FRESULT_str(fr), fr);
-        fr = f_lseek(&fil, lastOffset);
-        lastOffset += bytesToRead;
-
-        gpio_put(DEBUG_PIN3, 1);
-
-        if (f_read(&fil, data, bytesToRead, &bytes_read) < 0) {
-            printf("f_printf failed\n");
-        }
-        gpio_put(DEBUG_PIN3, 0);
-        if(bytes_read != bytesToRead)
         {
-            lastOffset = 0;
+            panic("f_open(%s) error: %s (%d)\n", filename, FRESULT_str(fr), fr);
         }
-        if (FR_OK != fr) {
-            printf("f_close error: %s (%d)\n", FRESULT_str(fr), fr);
-        }
-        f_unmount("");
+        g_cardAvailable = 1;
     }
-    
 
     while (true)
     {
@@ -154,37 +144,54 @@ void setup()
     gpio_set_dir(DEBUG_PIN1, GPIO_OUT);
     gpio_set_dir(DEBUG_PIN2, GPIO_OUT);
     gpio_set_dir(DEBUG_PIN3, GPIO_OUT);
-    gpio_put(DEBUG_PIN1, 1);
-    gpio_put(DEBUG_PIN2, 1);
-    gpio_put(DEBUG_PIN3, 1);
+    gpio_put(DEBUG_PIN1, 0);
+    gpio_put(DEBUG_PIN2, 0);
+    gpio_put(DEBUG_PIN3, 0);
 
     cominterfaceConfiguration config;
-    config.g_i2c = i2c0;
+    config.g_i2c = I2C_UNIT;
     config.g_i2cAddr = I2C_ADDR;
     config.g_sdaPin = SDA_PIN;
     config.g_sclPin = SCL_PIN;
     config.HOut_Callback = dataCallback;
     config.UpdateConfig_Callback = configCallback;
+    config.sync_callback = sync_callback;
 
     comInterfaceInit(&config);
 }
 
 void asyncLoop()
-{
-    static uint32_t lastSyncState = 0;
-    volatile uint32_t syncState = 0;
-    
-    if(syncState != lastSyncState)
+{    
+    if(g_sync)
     {
-        lastSyncState = syncState;
+        g_sync = 0;
+        UINT bytesRead = 0;
 
-        if (syncState == 1)
+        if (g_cardAvailable)
         {
-            gpio_put(DEBUG_PIN1, 1);
-            uint8_t data[4] = {0};
+            if (f_read(&g_file, data, READ_SIZE, &bytesRead) < 0) {
+                printf("f_printf failed\n");
+            }
+
+            if(READ_SIZE != bytesRead)
+            {
+                // Set file pointer to beginning
+                f_lseek(&g_file, 0);
+
+                // Trigger new send
+                g_sync = 1;
+                return;
+            }
+        }
+
+        for (size_t sample = 0; sample < SAMPLES_PER_CHANNEL / 4; sample++)
+        {
+            for (size_t channel = 0; channel < CHANNEL_NUMBER; channel++)
+            {
+                uint32_t value = data[sample * CHANNEL_NUMBER + channel];
+                comInterfaceAddSample(&value, channel);
+            }
             
-            comInterfaceAddSample(data, 4);
-            gpio_put(DEBUG_PIN1, 0);
         }
     }
 }
@@ -192,6 +199,11 @@ void asyncLoop()
 void dataCallback(void* data, uint32_t length)
 {
     // not implemented
+}
+
+void sync_callback()
+{
+    g_sync = 1;
 }
 
 void configCallback(DeviceSpecificConfiguration_t* config, DeviceSpecificConfiguration_t* oldConfig)

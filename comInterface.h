@@ -36,7 +36,7 @@ struct cominterfaceConfiguration
     // Callbacks
     void (*HOut_Callback)(void* data, uint32_t length);
     void (*UpdateConfig_Callback)(DeviceSpecificConfiguration_t* config, DeviceSpecificConfiguration_t* oldConfig);
-    void (*sync_Callback)(void);
+    void (*sync_callback)(void);
 };
 
 
@@ -45,6 +45,6 @@ struct cominterfaceConfiguration
  * *********************************************************************************/
 
 int32_t comInterfaceInit(cominterfaceConfiguration* config);
-void comInterfaceAddSample(void *sample, size_t sampleSize);
+void comInterfaceAddSample(void *sample, uint32_t channel);
 void comInterfaceGetStatus(DeviceSpecificStatus_t *status);
 void comInterfaceSetStatus(DeviceSpecificStatus_t *status, bool generateWarning, bool generateError);
