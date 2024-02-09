@@ -44,7 +44,7 @@
 #define SCL_PIN 27
 #define I2C_UNIT i2c1
 
-#define SAMPLES_PER_CHANNEL 10
+#define SAMPLES_PER_CHANNEL 15
 #define CHANNEL_NUMBER 6
 #define SAMPLE_SIZE 4
 #define READ_SIZE ( SAMPLES_PER_CHANNEL * CHANNEL_NUMBER * SAMPLE_SIZE)
@@ -164,7 +164,6 @@ void asyncLoop()
 {    
     if(g_sync)
     {
-        g_sync = 0;
         UINT bytesRead = 0;
 
         if (g_cardAvailable)
@@ -178,13 +177,18 @@ void asyncLoop()
                 // Set file pointer to beginning
                 f_lseek(&g_file, 0);
 
-                // Trigger new send
-                g_sync = 1;
-                return;
+                // Read the rest of the data
+                uint32_t bytesLeft = READ_SIZE - bytesRead;
+                if (f_read(&g_file, data + bytesRead / 4, bytesLeft, &bytesRead) < 0) {
+                    printf("f_printf failed\n");
+                }
+
+                // now all data should be read!
+                assert(bytesLeft == bytesRead);
             }
         }
 
-        for (size_t sample = 0; sample < SAMPLES_PER_CHANNEL / 4; sample++)
+        for (size_t sample = 0; sample < SAMPLES_PER_CHANNEL; sample++)
         {
             for (size_t channel = 0; channel < CHANNEL_NUMBER; channel++)
             {
@@ -193,6 +197,7 @@ void asyncLoop()
             }
             
         }
+        g_sync = 0;
     }
 }
 
