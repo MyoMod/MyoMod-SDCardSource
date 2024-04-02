@@ -138,6 +138,8 @@ void setup()
 {
     stdio_init_all();
 
+    printf("Start SD-Card Source\n");
+
     gpio_init(DEBUG_PIN1);
     gpio_init(DEBUG_PIN2);
     gpio_init(DEBUG_PIN3);
@@ -162,6 +164,8 @@ void setup()
 
 void asyncLoop()
 {    
+    static int minValue = 0;
+    static int maxValue = 0;
     if(g_sync)
     {
         UINT bytesRead = 0;
@@ -192,7 +196,17 @@ void asyncLoop()
         {
             for (size_t channel = 0; channel < CHANNEL_NUMBER; channel++)
             {
-                uint32_t value = data[sample * CHANNEL_NUMBER + channel];
+                int32_t value = data[sample * CHANNEL_NUMBER + channel];
+                
+                if (value < minValue)
+                {
+                    minValue = value;
+                }
+                if (value > maxValue)
+                {
+                    maxValue = value;
+                }
+
                 comInterfaceAddSample(&value, channel);
             }
             

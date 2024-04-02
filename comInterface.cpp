@@ -329,7 +329,7 @@ void core1_main(void)
 
 int core1_init(void)
 {
-    uart_init(uart0, 921600);
+    uart_init(uart1, 921600);
 
     // init i2c
     uint32_t longestRegisterLength = 0;

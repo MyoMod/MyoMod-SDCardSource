@@ -84,5 +84,5 @@
       "typeinfo": "cpp",
       "variant": "cpp"
     },
-    "cortex-debug.variableUseNaturalFormat": false,
+    "cortex-debug.variableUseNaturalFormat": true,
 }
